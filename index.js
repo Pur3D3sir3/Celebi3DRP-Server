@@ -229,26 +229,22 @@ io.on("connection", async (socket) => {
 
         const now = Date.now();
         const elapsedRaw = (now - character.last_update) / 1000;
-        const elapsed = Math.max(elapsedRaw, 0.08); // Increased to avoid tiny-interval rejections
+        const elapsed = Math.max(elapsedRaw, 0.08);
 
         // ── EXTREMELY LENIENT SPEED CHECK (debug mode) ──
         const maxSpeed = 3.5;
-        const buffer = 20.0; // Very high during troubleshooting
+        const buffer = 20.0;
         const maxAllowed = maxSpeed * elapsed * buffer;
 
         let accepted = false;
 
-        // Small movements always accepted – raised to cover typical curve steps
         if (distMoved < 1.5) {
             accepted = true;
         }
-        // Normal validation
         else if (distMoved <= maxAllowed) {
             accepted = true;
         }
-        // Reject only when truly extreme
         else {
-            // Detailed logging to diagnose remaining rejections
             console.log(
                 `Rejection for ${socket.id}: ` +
                 `${distMoved.toFixed(2)}m over ${elapsedRaw.toFixed(3)}s ` +
@@ -322,9 +318,9 @@ io.on("connection", async (socket) => {
             }
 
             if (!teleported) {
-                // BATCHED BROADCAST: Only emit every 100ms
+                // BATCHED BROADCAST: ~20 Hz for smoother remote movement
                 const scene = character.scene;
-                if (!socket.data.lastBroadcast || Date.now() - socket.data.lastBroadcast > 100) {
+                if (!socket.data.lastBroadcast || Date.now() - socket.data.lastBroadcast > 50) {
                     socket.data.lastBroadcast = Date.now();
                     emitCharactersToScene(scene);
                 }
@@ -462,7 +458,7 @@ io.on("connection", async (socket) => {
             );
             io.to(`scene_${user.current_scene}`).emit('update_scene_item', {
                 instance_id,
-                pos_x, pos_y, pos_z, rotation_y, scale // only send what was provided
+                pos_x, pos_y, pos_z, rotation_y, scale
             });
             if (typeof callback === 'function') {
                 callback({ status: 'ok' });
