@@ -38,7 +38,6 @@ const getActiveCharacter = async (user_id) => {
     return char || null;
 };
 
-// ── Auth ──────────────────────────────────────────────────────────────
 app.post('/register', async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) return res.status(400).json({ error: 'Missing fields' });
@@ -105,7 +104,6 @@ app.get('/user', async (req, res) => {
     }
 });
 
-// ── Characters ────────────────────────────────────────────────────────
 app.get('/characters', async (req, res) => {
     const authHeader = req.headers.authorization;
     if (!authHeader) return res.status(401).json({ error: 'No token' });
@@ -113,11 +111,36 @@ app.get('/characters', async (req, res) => {
     try {
         const decoded = jwt.verify(token, JWT_SECRET);
         const [rows] = await pool.execute(
-            `SELECT id, name, model, current_scene, last_x, last_y, last_z, created_at
+            `SELECT id, name, model, current_scene, last_x, last_y, last_z,
+                    COALESCE(level, 1) AS level, COALESCE(experience, 0) AS experience, created_at
              FROM characters WHERE user_id = ? ORDER BY id ASC`,
             [decoded.user_id]
         );
         res.json({ characters: rows });
+    } catch (err) {
+        res.status(401).json({ error: 'Invalid token' });
+    }
+});
+
+app.get('/active-character', async (req, res) => {
+    const authHeader = req.headers.authorization;
+    if (!authHeader) return res.status(401).json({ error: 'No token' });
+    const token = authHeader.split(' ')[1];
+    try {
+        const decoded = jwt.verify(token, JWT_SECRET);
+        const char = await getActiveCharacter(decoded.user_id);
+        if (!char) return res.status(404).json({ error: 'No active character' });
+        res.json({
+            character: {
+                id: char.id,
+                name: char.name,
+                model: char.model,
+                current_scene: char.current_scene || 1,
+                last_position: [char.last_x || 0, char.last_y || 0, char.last_z || 0],
+                level: char.level || 1,
+                experience: char.experience || 0
+            }
+        });
     } catch (err) {
         res.status(401).json({ error: 'Invalid token' });
     }
@@ -146,8 +169,8 @@ app.post('/characters', async (req, res) => {
         const fullModel = (model && model.startsWith('/')) ? model : `/meshy/${model || 'male1.glb'}`;
 
         const [result] = await pool.execute(
-            `INSERT INTO characters (user_id, name, model, current_scene, last_x, last_y, last_z)
-             VALUES (?, ?, ?, 1, 0, 0, 0)`,
+            `INSERT INTO characters (user_id, name, model, current_scene, last_x, last_y, last_z, level, experience)
+             VALUES (?, ?, ?, 1, 0, 0, 0, 1, 0)`,
             [user_id, name.trim(), fullModel]
         );
 
@@ -188,8 +211,10 @@ app.post('/select-character', async (req, res) => {
                 id: char.id,
                 name: char.name,
                 model: char.model,
-                current_scene: char.current_scene,
-                last_position: [char.last_x || 0, char.last_y || 0, char.last_z || 0]
+                current_scene: char.current_scene || 1,
+                last_position: [char.last_x || 0, char.last_y || 0, char.last_z || 0],
+                level: char.level || 1,
+                experience: char.experience || 0
             }
         });
     } catch (err) {
@@ -197,7 +222,6 @@ app.post('/select-character', async (req, res) => {
     }
 });
 
-// ── Scene items ───────────────────────────────────────────────────────
 app.get('/scene/:sceneId/items', async (req, res) => {
     const sceneId = parseInt(req.params.sceneId);
     if (isNaN(sceneId)) return res.status(400).json({ error: 'Invalid scene' });
@@ -213,7 +237,7 @@ app.get('/scene/:sceneId/items', async (req, res) => {
                 i.width, i.height,
                 i.is_walkable, i.is_interactable, i.interaction_type
             FROM scene_items si
-                     JOIN items i ON si.item_id = i.id
+            JOIN items i ON si.item_id = i.id
             WHERE si.scene_id = ?
         `, [sceneId]);
         res.json({ items: rows });
@@ -223,7 +247,6 @@ app.get('/scene/:sceneId/items', async (req, res) => {
     }
 });
 
-// ── Socket ────────────────────────────────────────────────────────────
 const characters = new Map();
 const randomPosition = () => [Math.random() * 10 - 5, 0, Math.random() * 10 - 5];
 const randomBrownHexColor = () => {
@@ -260,9 +283,10 @@ io.on("connection", async (socket) => {
             return;
         }
 
+        // Spawn at last saved scene + position
         const scene = char.current_scene || 1;
-        const position = char.last_x !== null
-            ? [char.last_x, char.last_y || 0, char.last_z || 0]
+        const position = (char.last_x !== null && char.last_x !== undefined)
+            ? [Number(char.last_x), Number(char.last_y) || 0, Number(char.last_z) || 0]
             : randomPosition();
 
         let model = char.model || '/meshy/male1.glb';
@@ -526,8 +550,8 @@ io.on("connection", async (socket) => {
             const scene = character.scene;
             try {
                 await pool.execute(
-                    'UPDATE characters SET last_x = ?, last_y = ?, last_z = ? WHERE id = ?',
-                    [...character.position, character.character_id]
+                    'UPDATE characters SET last_x = ?, last_y = ?, last_z = ?, current_scene = ? WHERE id = ?',
+                    [...character.position, character.scene, character.character_id]
                 );
             } catch (err) {
                 console.error('Disconnect save error:', err);
