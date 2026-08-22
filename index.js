@@ -81,7 +81,9 @@ app.post('/select-character', async (req, res) => {
         const user_id = decoded.user_id;
         const { model } = req.body;
         if (!model) return res.status(400).json({ error: 'Missing model' });
-        await pool.execute('UPDATE users SET character_model = ? WHERE id = ?', [model, user_id]);
+        // Force full path
+        const fullModel = model.startsWith('/') ? model : `/meshy/${model}`;
+        await pool.execute('UPDATE users SET character_model = ? WHERE id = ?', [fullModel, user_id]);
         res.json({ success: true });
     } catch (err) {
         res.status(401).json({ error: 'Invalid token' });
@@ -181,7 +183,9 @@ io.on("connection", async (socket) => {
         const scene = user.current_scene || 1;
         const position = user.last_x !== null ? [user.last_x, user.last_y, user.last_z] : randomPosition();
         const dogColor = randomBrownHexColor();
-        const model = user.character_model || 'male1.glb';
+        // Always force full path
+        let model = user.character_model || '/meshy/male1.glb';
+        if (!model.startsWith('/')) model = `/meshy/${model}`;
         characters.set(socket.id, {
             id: socket.id,
             user_id: user_id,
